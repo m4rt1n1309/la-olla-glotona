@@ -25,6 +25,17 @@
   let cortina = false;
   let temporizador = null;
 
+  // Modo online
+  const parametros = new URLSearchParams(location.search);
+  const enCompu = ['localhost', '127.0.0.1'].includes(location.hostname);
+  const hayOnline = enCompu || !String((window.FIREBASE_CONFIG || {}).apiKey || 'PEGAR').startsWith('PEGAR');
+  let Red = null; // módulo red.js, se carga recién al usarlo
+  let online = null; // { codigo, uid, sala, v, conectado, dejar, dejarConexion }
+  let ocupado = false;
+  let errorOnline = '';
+  let avisoCompartir = '';
+  const datosOnline = { nombre: '', codigo: parametros.get('sala') || '' };
+
   const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const humanos = () => E.jugadores.filter((j) => !j.bot).length;
 
@@ -78,7 +89,52 @@
         <div class="numeros">${[2, 3, 4].map((n) => `<button type="button" data-cantidad="${n}" class="${n === config.cantidad ? 'activo' : ''}">${n}</button>`).join('')}</div>
         ${filas}
         <button type="button" class="principal" data-accion="empezar">¡A cocinar!</button>
+        ${hayOnline ? '<button type="button" class="secundario" data-accion="online">Jugar online</button>' : ''}
         <button type="button" class="secundario" data-accion="reglas">Cómo se juega</button>
+        ${errorOnline ? `<p class="error">${esc(errorOnline)}</p>` : ''}
+      </section></main>`;
+  }
+
+  function vistaOnline() {
+    return `<main class="inicio">
+      <div class="logo">${A.olla}</div>
+      <h1>Jugar online</h1>
+      <p class="lema">Cada chef desde su celular.</p>
+      <section class="caja">
+        <label class="campo">Nombre del chef
+          <input data-campo="nombre" maxlength="16" value="${esc(datosOnline.nombre)}" placeholder="Chef Peque"></label>
+        <button type="button" class="principal" data-accion="crear-sala" ${ocupado ? 'disabled' : ''}>Crear sala</button>
+        <div class="separador">o con un código</div>
+        <div class="fila">
+          <input aria-label="Código de sala" class="entrada-codigo" data-campo="codigo" maxlength="4" autocapitalize="characters" autocomplete="off" value="${esc(datosOnline.codigo)}" placeholder="ABCD">
+          <button type="button" class="alternar" data-accion="unirse" ${ocupado ? 'disabled' : ''}>Entrar</button>
+        </div>
+        ${ocupado ? '<p class="ayuda">Conectando...</p>' : ''}
+        ${errorOnline ? `<p class="error">${esc(errorOnline)}</p>` : ''}
+        <button type="button" class="secundario" data-accion="volver">Volver</button>
+      </section></main>`;
+  }
+
+  const jugadoresSala = () => Object.entries(online.sala.jugadores || {}).sort((a, b) => a[1].unido - b[1].unido);
+  const soyHost = () => online && online.sala && online.sala.host === online.uid;
+
+  function vistaSala() {
+    const lista = jugadoresSala();
+    const listos = lista.filter(([, j]) => j.online !== false).length;
+    return `<main class="inicio">
+      <h1>Sala de espera</h1>
+      <p class="lema">Código de la sala</p>
+      <p class="codigo">${esc(online.codigo)}</p>
+      <button type="button" class="secundario" data-accion="compartir">${avisoCompartir || 'Compartir enlace'}</button>
+      <section class="caja">
+        <h2>Chefs (${lista.length}/4)</h2>
+        <ul class="chefs">${lista.map(([uid, j]) => `<li><span class="punto ${j.online === false ? 'apagado' : ''}"></span>${esc(j.nombre)}${uid === online.sala.host ? ' <small>anfitrión</small>' : ''}</li>`).join('')}</ul>
+        ${soyHost()
+          ? `<button type="button" class="principal" data-accion="empezar-online" ${listos >= 2 ? '' : 'disabled'}>¡A cocinar!</button>
+             ${listos < 2 ? '<p class="ayuda">Falta que entre al menos un chef más.</p>' : ''}`
+          : '<p class="ayuda">Esperando que el anfitrión empiece...</p>'}
+        ${errorOnline ? `<p class="error">${esc(errorOnline)}</p>` : ''}
+        <button type="button" class="secundario" data-accion="salir">Salir de la sala</button>
       </section></main>`;
   }
 
@@ -130,6 +186,7 @@
         <strong>${esc(p.nombre)}</strong>
         <span class="progreso">${J.progreso(p)}/4</span>
         ${p.salta ? '<span class="aviso">Resbalado</span>' : ''}
+        ${desconectado(p) ? '<span class="aviso">Sin conexión</span>' : ''}
         ${elegible ? `<button type="button" class="elegir" data-objetivo="${j}">Elegir</button>` : ''}
       </header>
       <p class="receta-nombre">${J.RECETAS[p.receta].nombre}</p>
@@ -138,7 +195,18 @@
     </section>`;
   }
 
+  function desconectado(p) {
+    const m = online && online.sala && online.sala.jugadores && online.sala.jugadores[p.uid];
+    return !!m && m.online === false;
+  }
+
   function ayudaTurno(objs) {
+    const actual = E.jugadores[E.turno];
+    if (online && E.turno !== visor) {
+      return desconectado(actual)
+        ? `${esc(actual.nombre)} se desconectó. Esperando que vuelva con el enlace de la sala...`
+        : `Esperando a ${esc(actual.nombre)}...`;
+    }
     if (E.jugadores[E.turno].bot) return `Está jugando ${esc(E.jugadores[E.turno].nombre)}...`;
     if (!esTurnoVisor()) return '';
     if (modoTirar) return 'Toca las cartas que quieras tirar.';
@@ -153,7 +221,7 @@
     const objs = objetivosSel();
     const yo = E.jugadores[visor];
     const orden = E.jugadores.map((_, i) => i).filter((i) => i !== visor);
-    const mostrarMano = !yo.bot && (humanos() === 1 || E.turno === visor);
+    const mostrarMano = !!online || (!yo.bot && (humanos() === 1 || E.turno === visor));
     const carta = sel !== null && yo.mano.find((c) => c.id === sel);
     const directa = carta && ['ingrediente', 'pimienta', 'mercado'].includes(carta.tipo) && objs.length > 0;
     const u = E.ultimo;
@@ -161,7 +229,7 @@
     const mano = mostrarMano
       ? yo.mano.map((c) => {
           const clases = (modoTirar ? (marcadas.has(c.id) ? 'marcada' : '') : sel === c.id ? 'elegida' : '');
-          return cartaHTML(c, clases, `data-carta="${c.id}" ${esTurnoVisor() ? '' : 'disabled'}`);
+          return cartaHTML(c, clases, `data-carta="${+c.id}" ${esTurnoVisor() ? '' : 'disabled'}`);
         }).join('')
       : '<p class="oculta">Cartas ocultas</p>';
 
@@ -175,6 +243,8 @@
     }
 
     return `<main class="partida">
+      ${online && !online.conectado ? '<p class="sin-red">Sin conexión, reconectando...</p>' : ''}
+      ${errorOnline ? `<p class="error">${esc(errorOnline)}</p>` : ''}
       <div class="rivales n${orden.length}">${orden.map((i) => mesaHTML(i, objs, false)).join('')}</div>
       <section class="centro">
         <div class="ultima">${u && u.carta ? cartaHTML(u.carta, 'fija pequena', `tabindex="-1" data-k="${E.log.length}"`) : `<span class="olla-mini">${A.olla}</span>`}</div>
@@ -204,12 +274,14 @@
       <h1>¡Ganó ${esc(g.nombre)}!</h1>
       <p class="lema">Terminó su ${J.RECETAS[g.receta].nombre}.</p>
       <div class="plato">${J.ingredientesDeReceta(g.receta).map((i) => `<span>${A[i]}</span>`).join('')}</div>
-      <button type="button" class="principal" data-accion="revancha">Jugar otra vez</button>
-      <button type="button" class="secundario" data-accion="salir">Cambiar jugadores</button></main>`;
+      ${!online || soyHost()
+        ? '<button type="button" class="principal" data-accion="revancha">Jugar otra vez</button>'
+        : '<p class="ayuda">Esperando que el anfitrión empiece otra partida...</p>'}
+      <button type="button" class="secundario" data-accion="salir">${online ? 'Salir de la sala' : 'Cambiar jugadores'}</button></main>`;
   }
 
   function render() {
-    const vistas = { inicio: vistaInicio, reglas: vistaReglas };
+    const vistas = { inicio: vistaInicio, reglas: vistaReglas, online: vistaOnline, sala: vistaSala };
     if (vistas[pantalla]) app.innerHTML = vistas[pantalla]();
     else if (E.ganador !== null) app.innerHTML = vistaFin();
     else app.innerHTML = cortina ? vistaCortina() : vistaPartida();
@@ -233,6 +305,10 @@
     modoTirar = false;
     marcadas = new Set();
     clearTimeout(temporizador);
+    if (online) {
+      enviarPartida(online.v + 1);
+      return render();
+    }
     if (E.ganador === null) {
       const actual = E.jugadores[E.turno];
       if (actual.bot) {
@@ -249,9 +325,131 @@
     if (J.jugar(E, sel, objetivo)) seguir();
   }
 
+  // ---------- Online ----------
+  function direccionSala(codigo) {
+    const p = new URLSearchParams(location.search);
+    if (codigo) p.set('sala', codigo); else p.delete('sala');
+    const q = p.toString();
+    return location.pathname + (q ? '?' + q : '');
+  }
+
+  async function conEspera(tarea) {
+    if (ocupado) return;
+    ocupado = true;
+    errorOnline = '';
+    render();
+    try {
+      if (!Red) Red = await import('./red.js');
+      await tarea();
+    } catch (err) {
+      console.warn(err);
+      errorOnline = err.name === 'ErrorSala' ? err.message : 'No se pudo conectar. Revisa el internet e intenta de nuevo.';
+    }
+    ocupado = false;
+    render();
+  }
+
+  async function conectar(codigo) {
+    const uid = await Red.entrar();
+    online = { codigo, uid, sala: null, v: null, conectado: true };
+    online.dejarConexion = Red.alCambiarConexion((ok) => {
+      if (!online) return;
+      online.conectado = ok;
+      render();
+    });
+    online.dejar = Red.escucharSala(codigo, alCambiarSala);
+    history.replaceState(null, '', direccionSala(codigo));
+  }
+
+  function alCambiarSala(sala) {
+    if (!online) return;
+    if (!sala) return dejarSala('La sala ya no existe.');
+    online.sala = sala;
+    if (sala.partida) {
+      if (sala.partida.v !== online.v) {
+        online.v = sala.partida.v;
+        E = JSON.parse(sala.partida.estado);
+        window.__partida = E;
+        sel = null;
+        modoTirar = false;
+        marcadas = new Set();
+      }
+      visor = E.jugadores.findIndex((j) => j.uid === online.uid);
+      if (visor < 0) return dejarSala('Esa partida ya empezó.');
+      cortina = false;
+      pantalla = 'partida';
+    } else {
+      E = null;
+      pantalla = 'sala';
+    }
+    render();
+  }
+
+  function enviarPartida(v) {
+    online.v = v;
+    Red.guardarPartida(online.codigo, {
+      estado: JSON.stringify(E),
+      actual: E.jugadores[E.turno].uid,
+      fin: E.ganador !== null,
+      v,
+    }).catch((err) => {
+      console.warn(err);
+      errorOnline = 'No se pudo guardar la jugada.';
+      render();
+    });
+  }
+
+  function empezarOnline() {
+    const lista = jugadoresSala().filter(([, j]) => j.online !== false).slice(0, 4);
+    if (lista.length < 2) {
+      errorOnline = 'Hacen falta al menos 2 chefs conectados.';
+      return render();
+    }
+    E = J.crearPartida(lista.map(([, j]) => ({ nombre: j.nombre, bot: false })));
+    E.jugadores.forEach((j, i) => { j.uid = lista[i][0]; });
+    window.__partida = E;
+    errorOnline = '';
+    enviarPartida(Date.now());
+  }
+
+  function dejarSala(mensaje) {
+    const o = online;
+    online = null;
+    E = null;
+    pantalla = 'inicio';
+    errorOnline = mensaje || '';
+    history.replaceState(null, '', direccionSala(null));
+    if (o) {
+      if (o.dejar) o.dejar();
+      if (o.dejarConexion) o.dejarConexion();
+      Red.salir(o.codigo, !o.sala || !o.sala.partida).catch((err) => console.warn(err));
+    }
+    render();
+  }
+
+  async function compartir() {
+    const url = location.origin + direccionSala(online.codigo);
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: 'La Olla Glotona', text: `Sala ${online.codigo} de La Olla Glotona`, url });
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      avisoCompartir = '¡Enlace copiado!';
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      avisoCompartir = url;
+    }
+    render();
+  }
+
+  const nombreOnline = () => datosOnline.nombre.trim() || 'Chef';
+
   app.addEventListener('input', (ev) => {
     const i = ev.target.dataset.nombre;
     if (i !== undefined) config.jugadores[i].nombre = ev.target.value;
+    const campo = ev.target.dataset.campo;
+    if (campo) datosOnline[campo] = ev.target.value;
   });
 
   app.addEventListener('click', (ev) => {
@@ -272,10 +470,25 @@
       return ejecutar(o);
     }
     switch (d.accion) {
-      case 'empezar': case 'revancha': return empezar();
+      case 'empezar': return empezar();
+      case 'revancha': return online ? empezarOnline() : empezar();
       case 'reglas': pantalla = 'reglas'; return render();
-      case 'volver': pantalla = 'inicio'; return render();
-      case 'salir': clearTimeout(temporizador); pantalla = 'inicio'; cortina = false; return render();
+      case 'volver': pantalla = 'inicio'; errorOnline = ''; return render();
+      case 'salir':
+        if (online) return dejarSala();
+        clearTimeout(temporizador); pantalla = 'inicio'; cortina = false; return render();
+      case 'online': pantalla = 'online'; errorOnline = ''; return render();
+      case 'crear-sala':
+        return conEspera(async () => { await conectar(await Red.crearSala(nombreOnline())); });
+      case 'unirse':
+        return conEspera(async () => {
+          const codigo = Red.normalizarCodigo(datosOnline.codigo);
+          if (codigo.length !== 4) { errorOnline = 'El código tiene 4 letras.'; return; }
+          await Red.unirse(codigo, nombreOnline());
+          await conectar(codigo);
+        });
+      case 'compartir': return compartir();
+      case 'empezar-online': return empezarOnline();
       case 'ver': cortina = false; return render();
       case 'tirar': modoTirar = true; sel = null; marcadas = new Set(); return render();
       case 'cancelar-tirar': modoTirar = false; marcadas = new Set(); return render();
@@ -283,6 +496,18 @@
       case 'jugar-directa': { const o = objetivosSel()[0]; if (o) ejecutar(o); return; }
     }
   });
+
+  // Al abrir un enlace de sala: quien ya estaba vuelve a su lugar, y quien no escribe su nombre.
+  if (hayOnline && datosOnline.codigo) {
+    pantalla = 'online';
+    conEspera(async () => {
+      const codigo = Red.normalizarCodigo(datosOnline.codigo);
+      if (codigo.length === 4 && await Red.soyMiembro(codigo)) {
+        await Red.unirse(codigo, '');
+        await conectar(codigo);
+      }
+    });
+  }
 
   render();
 })();
