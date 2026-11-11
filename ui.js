@@ -343,7 +343,13 @@
       await tarea();
     } catch (err) {
       console.warn(err);
-      errorOnline = err.name === 'ErrorSala' ? err.message : 'No se pudo conectar. Revisa el internet e intenta de nuevo.';
+      const codigoErr = `${err?.code || ''} ${err?.message || ''}`;
+      if (err.name === 'ErrorSala') errorOnline = err.message;
+      else if (/configuration-not-found|CONFIGURATION_NOT_FOUND|operation-not-allowed|admin-restricted/i.test(codigoErr))
+        errorOnline = 'El modo online no está habilitado (falta activar el acceso anónimo en Firebase).';
+      else if (/permission[_ ]denied/i.test(codigoErr)) errorOnline = 'Firebase rechazó la operación (revisa las reglas de la base de datos).';
+      else if (!navigator.onLine || /network/i.test(codigoErr)) errorOnline = 'No se pudo conectar. Revisa el internet e intenta de nuevo.';
+      else errorOnline = 'Error al conectar: ' + (err?.code || err?.message || 'desconocido');
     }
     ocupado = false;
     render();
