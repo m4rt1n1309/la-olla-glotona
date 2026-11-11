@@ -2,6 +2,23 @@
   "database": {
     "rules": "database.rules.json"
   },
+  "hosting": {
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      "database.rules.json",
+      ".firebaserc",
+      "**/.*",
+      ".git/**",
+      "**/.git/**",
+      ".firebase/**",
+      "**/*.log",
+      "**/node_modules/**"
+    ],
+    "headers": [
+      { "source": "**/*.@(js|css|html)", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] }
+    ]
+  },
   "emulators": {
     "auth": { "host": "127.0.0.1", "port": 9099 },
     "database": { "host": "127.0.0.1", "port": 9000 },
