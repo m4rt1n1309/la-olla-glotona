@@ -105,6 +105,28 @@
     return e.mazo.concat(e.descarte).some((c) => c.tipo === 'ingrediente' && faltan.includes(c.ing));
   }
 
+  // Pimienta: cura un solo mordisco tuyo (primero los de tu receta).
+  function mordidoACurar(e, j) {
+    const yo = e.jugadores[j];
+    const receta = ingredientesDeReceta(yo.receta);
+    const orden = receta.concat(ING.filter((i) => !receta.includes(i)));
+    return orden.find((i) => yo.mesa[i] && yo.mesa[i].mordisco) || null;
+  }
+
+  // Pimienta: tapas rivales sobre ingredientes que tu receta pide y todavía no tenés.
+  function tapasQueMeFrenan(e, j) {
+    const yo = e.jugadores[j];
+    const faltan = ingredientesDeReceta(yo.receta).filter((i) => !yo.mesa[i]);
+    const res = [];
+    for (const r of rivales(e, j)) {
+      for (const ing of faltan) {
+        const p = e.jugadores[r].mesa[ing];
+        if (p && p.tapa) res.push({ jugador: r, ing });
+      }
+    }
+    return res;
+  }
+
   // Lista de lugares donde se puede usar una carta. Vacía = ahora no se puede jugar.
   function objetivos(e, carta, j) {
     if (j === undefined) j = e.turno;
@@ -143,12 +165,9 @@
       case 'resbalon':
         for (const r of rivales(e, j)) if (!e.jugadores[r].salta) res.push({ jugador: r });
         break;
-      case 'pimienta': {
-        const curar = ING.some((i) => yo.mesa[i] && yo.mesa[i].mordisco);
-        const soplar = rivales(e, j).some((r) => ING.some((i) => e.jugadores[r].mesa[i] && e.jugadores[r].mesa[i].tapa));
-        if (curar || soplar) res.push({ jugador: j });
+      case 'pimienta':
+        if (mordidoACurar(e, j) || tapasQueMeFrenan(e, j).length) res.push({ jugador: j });
         break;
-      }
       case 'mercado':
         if (hayIngredienteDisponible(e, j)) res.push({ jugador: j });
         break;
@@ -217,25 +236,27 @@
         otro.salta = true;
         e.descarte.push(carta);
         return `${otro.nombre} pisa una cáscara y perderá su próximo turno.`;
-      case 'pimienta':
-        for (const i of ING) {
-          const p = yo.mesa[i];
-          if (p && p.mordisco) {
-            e.descarte.push(p.mordisco);
-            p.mordisco = null;
-          }
+      case 'pimienta': {
+        const curado = mordidoACurar(e, j);
+        const tapas = tapasQueMeFrenan(e, j);
+        if (curado) {
+          e.descarte.push(yo.mesa[curado].mordisco);
+          yo.mesa[curado].mordisco = null;
         }
-        for (const r of rivales(e, j)) {
-          for (const i of ING) {
-            const p = e.jugadores[r].mesa[i];
-            if (p && p.tapa) {
-              e.descarte.push(p.tapa);
-              p.tapa = null;
-            }
-          }
+        for (const t of tapas) {
+          const p = e.jugadores[t.jugador].mesa[t.ing];
+          e.descarte.push(p.tapa);
+          p.tapa = null;
         }
         e.descarte.push(carta);
-        return `¡Achís! ${yo.nombre} cura sus mordiscos y vuelan las tapas de los rivales.`;
+        const partes = [];
+        if (curado) partes.push(`cura su ${INGREDIENTES[curado].nombre}`);
+        if (tapas.length) {
+          const nombres = [...new Set(tapas.map((t) => INGREDIENTES[t.ing].nombre))].join(', ');
+          partes.push(`vuela ${tapas.length === 1 ? 'la tapa' : 'las tapas'} de ${nombres}`);
+        }
+        return `¡Achís! ${yo.nombre} ${partes.join(' y ')}.`;
+      }
       case 'mercado': {
         const faltan = ingredientesDeReceta(yo.receta).filter((i) => !yo.mesa[i]);
         const sirve = (c) => c.tipo === 'ingrediente' && faltan.includes(c.ing);
@@ -349,8 +370,8 @@
       case 'resbalon':
         return 12 + progreso(otro) * 8;
       case 'pimienta': {
-        const mordidos = receta.filter((i) => yo.mesa[i] && yo.mesa[i].mordisco).length;
-        return mordidos * 30 + 8;
+        const curado = mordidoACurar(e, j);
+        return (curado && receta.includes(curado) ? 40 : 0) + tapasQueMeFrenan(e, j).length * 10 + 2;
       }
     }
     return 0;

@@ -45,7 +45,7 @@
     horno: ['Horno', 'Cocina un ingrediente sano: nadie lo toca más.'],
     cucharon: ['Cucharón', 'Roba un ingrediente que no tengas.'],
     cambio: ['Cambio de receta', 'Cambia tu receta con un rival.'],
-    pimienta: ['Pimienta', 'Cura tus mordiscos y vuela las tapas rivales.'],
+    pimienta: ['Pimienta', 'Cura 1 mordisco y vuela las tapas de lo que te falta.'],
     mercado: ['Mercado', 'Trae del mazo algo que le falta a tu receta.'],
     resbalon: ['Resbalón', 'Un rival pierde su próximo turno.'],
   };
@@ -190,9 +190,21 @@
         ${elegible ? `<button type="button" class="elegir" data-objetivo="${j}">Elegir</button>` : ''}
       </header>
       <p class="receta-nombre">${J.RECETAS[p.receta].nombre}</p>
+      ${propia ? pideHTML(p) : ''}
       <div class="huecos">${J.ING.map((i) => huecoHTML(j, i, objs)).join('')}</div>
       ${propia ? '' : `<p class="cuenta">${p.mano.length} cartas en la mano</p>`}
     </section>`;
+  }
+
+  // Lista de lo que pide tu receta, marcando lo que ya tenés.
+  function pideHTML(p) {
+    const items = J.ingredientesDeReceta(p.receta).map((i) => {
+      const pieza = p.mesa[i];
+      const estado = !pieza ? 'falta' : pieza.mordisco ? 'mordido' : 'listo';
+      const texto = { falta: 'te falta', mordido: 'mordido', listo: 'listo' }[estado];
+      return `<li class="${estado}" title="${J.INGREDIENTES[i].nombre}: ${texto}">${mini(i)}<span>${J.INGREDIENTES[i].nombre}</span></li>`;
+    }).join('');
+    return `<ul class="pide" aria-label="Tu receta pide">${items}</ul>`;
   }
 
   function desconectado(p) {
